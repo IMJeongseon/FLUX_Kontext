@@ -1,0 +1,171 @@
+[
+ {
+  "name": "corgi/kontext",
+  "source": "data/sources/corgi_raincoat.png",
+  "output": "outputs/rtar/corgi_jump_plain.png",
+  "marker_box": [
+   560,
+   360,
+   800,
+   620
+  ],
+  "target_prompt": "a corgi jumping high in the air to catch a frisbee",
+  "static_prompt": "a corgi standing still on the grass"
+ },
+ {
+  "name": "corgi/kvedit",
+  "source": "data/sources/corgi_raincoat.png",
+  "output": "outputs/lean/corgi_jump_kvedit.png",
+  "marker_box": [
+   560,
+   360,
+   800,
+   620
+  ],
+  "target_prompt": "a corgi jumping high in the air to catch a frisbee",
+  "static_prompt": "a corgi standing still on the grass"
+ },
+ {
+  "name": "corgi/flowedit",
+  "source": "data/sources/corgi_raincoat.png",
+  "output": "/home/jeongseon39/MLLAB/FlowEdit/outputs/FlowEdit_ours/FLUX/src_corgi_raincoat/tar_0/output_T_steps_28_n_avg_1_cfg_enc_1.5_cfg_dec5.5_n_min_0_n_max_24_seed42.png",
+  "marker_box": [
+   560,
+   360,
+   800,
+   620
+  ],
+  "target_prompt": "a corgi jumping high in the air to catch a frisbee",
+  "static_prompt": "a corgi standing still on the grass"
+ },
+ {
+  "name": "corgi/ours_topk8",
+  "source": "data/sources/corgi_raincoat.png",
+  "output": "outputs/lean/corgi_jump_topk8.png",
+  "marker_box": [
+   560,
+   360,
+   800,
+   620
+  ],
+  "target_prompt": "a corgi jumping high in the air to catch a frisbee",
+  "static_prompt": "a corgi standing still on the grass"
+ },
+ {
+  "name": "corgi/cora",
+  "source": "data/sources/corgi_raincoat.png",
+  "output": "/home/jeongseon39/MLLAB/cora/output/A_corgi_wearing_a_yellow_raincoat_with_the_number#The_corgi_wearing_a_yellow_raincoat_with_the_numbe/output_0.png",
+  "marker_box": [
+   560,
+   360,
+   800,
+   620
+  ],
+  "target_prompt": "a corgi jumping high in the air to catch a frisbee",
+  "static_prompt": "a corgi standing still on the grass"
+ },
+ {
+  "name": "beagle/kontext",
+  "source": "data/sources/real_beagle.png",
+  "output": "outputs/lean/beagle_jump_plain.png",
+  "marker_box": [
+   600,
+   480,
+   920,
+   820
+  ],
+  "target_prompt": "a beagle jumping high in the air to catch a frisbee",
+  "static_prompt": "a beagle standing still on the grass"
+ },
+ {
+  "name": "beagle/kvedit",
+  "source": "data/sources/real_beagle.png",
+  "output": "outputs/lean/beagle_jump_kvedit.png",
+  "marker_box": [
+   600,
+   480,
+   920,
+   820
+  ],
+  "target_prompt": "a beagle jumping high in the air to catch a frisbee",
+  "static_prompt": "a beagle standing still on the grass"
+ },
+ {
+  "name": "beagle/flowedit",
+  "source": "data/sources/real_beagle.png",
+  "output": "/home/jeongseon39/MLLAB/FlowEdit/outputs/FlowEdit_ours/FLUX/src_real_beagle/tar_0/output_T_steps_28_n_avg_1_cfg_enc_1.5_cfg_dec5.5_n_min_0_n_max_24_seed42.png",
+  "marker_box": [
+   600,
+   480,
+   920,
+   820
+  ],
+  "target_prompt": "a beagle jumping high in the air to catch a frisbee",
+  "static_prompt": "a beagle standing still on the grass"
+ },
+ {
+  "name": "beagle/ours_uniform",
+  "source": "data/sources/real_beagle.png",
+  "output": "outputs/lean/beagle_jump_keep.png",
+  "marker_box": [
+   600,
+   480,
+   920,
+   820
+  ],
+  "target_prompt": "a beagle jumping high in the air to catch a frisbee",
+  "static_prompt": "a beagle standing still on the grass"
+ },
+ {
+  "name": "beagle/ours_topk8_b35",
+  "source": "data/sources/real_beagle.png",
+  "output": "outputs/lean/beagle_jump_topk8_b35.png",
+  "marker_box": [
+   600,
+   480,
+   920,
+   820
+  ],
+  "target_prompt": "a beagle jumping high in the air to catch a frisbee",
+  "static_prompt": "a beagle standing still on the grass"
+ },
+ {
+  "name": "beagle/cora",
+  "source": "data/sources/real_beagle.png",
+  "output": "/home/jeongseon39/MLLAB/cora/output/A_beagle_dog_standing_on_green_grass_looking_up#The_beagle_dog_jumping_high_in_the_air_to_catch_a/output_0.png",
+  "marker_box": [
+   600,
+   480,
+   920,
+   820
+  ],
+  "target_prompt": "a beagle jumping high in the air to catch a frisbee",
+  "static_prompt": "a beagle standing still on the grass"
+ },
+ {
+  "name": "bandana/kontext",
+  "source": "data/sources/real_dog.png",
+  "output": "outputs/lean/realdog_plain.png",
+  "marker_box": [
+   430,
+   680,
+   860,
+   1000
+  ],
+  "target_prompt": "a dog looking down at the ground",
+  "static_prompt": "a dog looking up proudly"
+ },
+ {
+  "name": "bandana/ours_topk8",
+  "source": "data/sources/real_dog.png",
+  "output": "outputs/lean/realdog_topk8.png",
+  "marker_box": [
+   430,
+   680,
+   860,
+   1000
+  ],
+  "target_prompt": "a dog looking down at the ground",
+  "static_prompt": "a dog looking up proudly"
+ }
+]
