@@ -81,7 +81,7 @@ def main():
         "--identity-layers", "content",   # appearance channel only
         "--layers", "content",            # 13 manual layers: 2x faster, no quality loss
         "--suppression-bias", str(args.suppress),
-        "--soft-background", "2.5",
+        "--soft-background",
         "--soft-background-text", "4.0",
         "--soft-background-latent",        # pixel-faithful background
         "--repaint-until-step", "20",      # hold the latent anchor late so the

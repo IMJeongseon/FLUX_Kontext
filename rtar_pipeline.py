@@ -319,13 +319,16 @@ def main():
                              "region row's own-target bias is gain-scaled by its "
                              "attention silhouette (object forms its own shape instead "
                              "of filling the mask)")
-    parser.add_argument("--soft-background", type=float, default=0.0,
-                        help="mask-FREE background preservation: replace RePaint latent "
-                             "anchoring with an attention bias — every non-source-mask "
-                             "row gets beta*(1-editedness) toward its own-position ref "
-                             "token. Objects may form anywhere (text binding can win); "
-                             "masks only mark what disappears. Implies --identity-dynamic "
-                             "and full-image canvas.")
+    parser.add_argument("--soft-background", action="store_true",
+                        help="mask-FREE background preservation mode: full-image canvas; "
+                             "unclaimed rows (low editedness) are pixel-preserved via the "
+                             "latent gate and stop hearing the prompt via text "
+                             "suppression. Masks only mark what disappears. Implies "
+                             "--identity-dynamic.")
+    parser.add_argument("--soft-background-anchor", type=float, default=0.0,
+                        help="ablation arm: additional attention bias beta*(1-editedness) "
+                             "toward each row's own-position ref token. Redundant with "
+                             "the latent gate in all validated cases (default off).")
     parser.add_argument("--soft-background-latent", action="store_true",
                         help="in soft-background mode, also latent-anchor (RePaint) the "
                              "non-source-mask tokens by (1-editedness): true background is "
@@ -337,7 +340,7 @@ def main():
                              "-beta*(1-editedness) on all text columns, so the "
                              "background stops listening to the prompt (RePaint's "
                              "second, implicit role). 0 disables.")
-    parser.add_argument("--soft-background-halo", type=int, default=2,
+    parser.add_argument("--soft-background-halo", type=int, default=0,
                         help="grid-dilate the editedness map this many tokens before "
                              "computing the anchor, leaving a growth band around forming "
                              "objects (0 = sharp per-row anchor; objects stay "
@@ -383,11 +386,11 @@ def main():
     parser.add_argument("--layer-ids", default=None,
                         help="comma-separated global layer indices (0..56) when --layers custom")
     args = parser.parse_args()
-    full_canvas = args.soft_background > 0
+    full_canvas = args.soft_background
     if full_canvas:
         args.identity_dynamic = True  # editedness needs the harvest machinery
     if full_canvas and args.no_rtar:
-        raise ValueError("--soft-background/--two-pass need the regional processor "
+        raise ValueError("--soft-background needs the regional processor "
                          "(incompatible with --no-rtar)")
 
     sources = [s.strip() for s in args.source_objects.split(",") if s.strip()]
@@ -691,14 +694,14 @@ def main():
         for obj, rows, span, g0 in dyn_target_setup:
             proc.add_dynamic(rows, span, span, args.target_dyn_bias,
                              in_ref=False, init_gain=g0, **dyn_kw)
-        if args.soft_background > 0:
+        if args.soft_background:
             bg_rows = [i for i, g in enumerate(all_gen) if seen[g] is None]
             bg_toks = [all_gen[i] for i in bg_rows]
-            proc.set_soft_background(bg_rows, bg_toks, args.soft_background,
+            proc.set_soft_background(bg_rows, bg_toks, args.soft_background_anchor,
                                      text_suppress=args.soft_background_text,
                                      halo=args.soft_background_halo)
-            print(f"  soft background anchor: {len(bg_rows)} rows, "
-                  f"beta={args.soft_background}, "
+            print(f"  soft background: {len(bg_rows)} rows, "
+                  f"anchor={args.soft_background_anchor}, "
                   f"text_suppress={args.soft_background_text}, "
                   f"halo={args.soft_background_halo}")
         # FreeFlux layer role sets (from arXiv 2503.16153, discovered via RoPE probing)

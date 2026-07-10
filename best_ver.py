@@ -46,7 +46,7 @@ DEFAULTS = [
     # manual attention only on the 13 content layers: 2.1x faster (10.3 vs
     # 21.6 s/it) with no visible quality loss; pass --layers all to revert
     "--layers", "content",
-    "--soft-background", "2.5",
+    "--soft-background",
     "--soft-background-text", "4.0",
     "--soft-background-latent",   # editedness-gated latent bg preservation:
                                   # background stays source pixels (no over-sharpen),
