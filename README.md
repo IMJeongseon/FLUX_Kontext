@@ -48,7 +48,6 @@ src/pipeline.py    # THE method (single entry point, validated defaults)
 src/regional_processor.py   # gated-bias attention processor
 eval/              # metrics (marker-survival, CLIP-direction motion) + manifests
 scripts/           # data generation utilities
-legacy/            # exploration-era scripts (kept for ablation reproduction)
 data/              # source images + rough masks
 outputs/           # results (gitignored)
 ```
