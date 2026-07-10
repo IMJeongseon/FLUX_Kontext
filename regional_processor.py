@@ -56,36 +56,7 @@ class RegionalMRASProcessor:
         self.dyn_ema = 0.7
         self.dyn_gamma = 1.0
         self.dyn_floor = 0.0
-        # Late-step identity ramp: multiply the in_ref (identity) bias by a
-        # factor that grows from ramp_lo to ramp_hi over [ramp_from, ramp_to].
-        # Early steps stay weak (pose forms from text, old pose not revived);
-        # late steps go strong (pose is locked, so strong ref transports fine
-        # detail from the reference WITHOUT reviving the old pose).
-        self.id_ramp = False
-        self.ramp_lo = 1.0
-        self.ramp_hi = 1.0
-        self.ramp_from = 0
-        self.ramp_to = 28
         self.capture_entropy = False  # record within-object attention stats
-        # correspondence-gated semantic routing: each gen row's binding to an
-        # attribute phrase (e.g. "raincoat") is gated by the semantics of its
-        # MATCHED source part — rows matched to garment-free source parts stop
-        # hearing the garment words, so the text prior cannot paint sleeves
-        # where the source instance has none. Source-part semantics come from
-        # the ref rows' own affinity to the phrase (free, inside attention).
-        self.sem_gate = None  # {"span": LongTensor, "kappa": float}
-        self._garm = None     # per-call garmentness of object ref cols [C]
-
-    def _ramp(self) -> float:
-        if not self.id_ramp:
-            return 1.0
-        s = self.current_step
-        if s <= self.ramp_from:
-            return self.ramp_lo
-        if s >= self.ramp_to:
-            return self.ramp_hi
-        f = (s - self.ramp_from) / max(1, self.ramp_to - self.ramp_from)
-        return self.ramp_lo + (self.ramp_hi - self.ramp_lo) * f
 
     def _nongen_rows(self, T: int, N: int, device):
         """Joint-sequence rows NOT manually recomputed (text + non-gen image +
@@ -254,9 +225,8 @@ class RegionalMRASProcessor:
                     # unclaimed rows stop listening to the prompt
                     scores[:, :, br, :T] -= (sc * self._bg_txt)[None, None, :, None]
         if i_active:
-            ramp = self._ramp()
             if irb is not None:
-                scores[:, :, :, rs:rs + self._N] = scores[:, :, :, rs:rs + self._N] + ramp * irb[None, None, :, :]
+                scores[:, :, :, rs:rs + self._N] = scores[:, :, :, rs:rs + self._N] + irb[None, None, :, :]
             dev = scores.device
             key = str(dev)
             for si, sp in enumerate(self.dyn_specs):
@@ -268,8 +238,7 @@ class RegionalMRASProcessor:
                                    sp["bias_cols"].to(dev),
                                    sp["gain"].to(dev, torch.float32))
                 rows, cols, gain = cached[key]
-                # ramp only the identity (in_ref) transport, not target text bias
-                m = sp["beta"] * (ramp if sp["in_ref"] else 1.0)
+                m = sp["beta"]
                 if sp["in_ref"] and sp["topk"] > 0:
                     # correspondence-sharpened: boost each row's own top-k
                     # matches among the object's ref columns (emergent
@@ -288,40 +257,12 @@ class RegionalMRASProcessor:
                     rows_e = rows[:, None].expand(-1, k)           # [R, k]
                     bias = (g[:, None] * m).expand(-1, k)          # [R, k]
                     scores[0, :, rows_e, tgt_cols] += bias
-                    # correspondence-gated semantic routing: rows whose matched
-                    # source parts are attribute-free (e.g. bare legs) stop
-                    # hearing the attribute words — text prior cannot paint
-                    # sleeves where the source instance has none
-                    if self._garm is not None and si in self._garm:
-                        gr = self._garm[si][idx].mean(1)           # [R] matched garment-ness
-                        gspan = self.sem_gate["span"].to(dev)
-                        sup = (-self.sem_gate["kappa"] * (1.0 - gr) * g)
-                        scores[0, :, rows[:, None], gspan[None, :]] += sup[:, None][None]
                     continue
                 if sp["in_ref"]:
                     cols = rs + cols
                 bias = gain[:, None] * m
                 scores[:, :, rows[:, None], cols[None, :]] += bias[None, None]
         return scores
-
-    def _compute_garm(self, q_p, k_p, ci, rs):
-        """Per object ref column: affinity of that SOURCE part to the gated
-        attribute phrase (e.g. garment words). Rank-normalized to [0,1]."""
-        if self.sem_gate is None:
-            self._garm = None
-            return
-        dev = q_p.device
-        span = self.sem_gate["span"].to(dev)
-        self._garm = {}
-        for si, sp in enumerate(self.dyn_specs):
-            if not sp["in_ref"]:
-                continue
-            cols = rs + sp["bias_cols"].to(dev)
-            q_ref = q_p[ci, :, cols, :].float()      # [H, C, D]
-            k_g = k_p[ci, :, span, :].float()        # [H, G, D]
-            aff = torch.einsum("hcd,hgd->hcg", q_ref, k_g).mean(dim=(0, 2))  # [C]
-            a = aff - aff.min()
-            self._garm[si] = a / (a.max() + 1e-8)
 
     def _ot_transport(self, out_gm, scores, v_all, rs):
         """Barycentric OT value injection:  o_i <- (1-λg_i) o_i + λg_i (P V)_i.
@@ -507,7 +448,6 @@ class RegionalMRASProcessor:
                 D_h = q_gm.shape[-1]
                 scale = D_h ** -0.5
                 scores = (q_gm.float() @ k_all.float().transpose(-2, -1)) * scale
-                self._compute_garm(qp, kp, ci, rs)
                 scores = self._apply(scores, gs, rs, T, gen_t, tb, rb, irb,
                                      s_active, i_active)
                 attn_w = torch.softmax(scores, dim=-1).to(qp.dtype)
@@ -580,7 +520,6 @@ class RegionalMRASProcessor:
             D_h = q_gm.shape[-1]
             scale = D_h ** -0.5
             scores = (q_gm.float() @ k_all.float().transpose(-2, -1)) * scale
-            self._compute_garm(jq_p, jk_p, ci, rs)
             scores = self._apply(scores, gs, rs, T_full, gen_t, tb, rb, irb,
                                  s_active, i_active)
             attn_w = torch.softmax(scores, dim=-1).to(jq_p.dtype)

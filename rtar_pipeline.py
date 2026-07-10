@@ -121,15 +121,10 @@ def build_repaint_weight(edit_tokens, N, grid, dilate: int = 0, spatial_feather:
 
 def make_repaint_callback(proc, src_packed, weight,
                           repaint_until_step: int, feather_ramp: int = 0,
-                          ring=None, latent_gate=None):
+                          latent_gate=None):
     """Anchor background latents to the (renoised) source at every step
     until `repaint_until_step`, blended per token by `weight` [N] (see
     build_repaint_weight), with an optional linear temporal ramp-off.
-
-    ring: optional (ring_token_idx, ring_row_idx) for the dynamic canvas —
-    ring tokens whose attention editedness is low are re-anchored to the
-    source (their source content is clean background), so the free band
-    only stays open where an object actually claims it.
 
     latent_gate: optional (tok_idx, row_idx) covering ALL non-source-mask
     tokens in full-canvas soft-background mode. Each is latent-anchored to
@@ -156,7 +151,7 @@ def make_repaint_callback(proc, src_packed, weight,
             alpha = max(0.0, 1.0 - (step_idx - ramp_start + 1) / (feather_ramp + 1))
 
         w_full = weight
-        gates = [g for g in (ring, latent_gate) if g is not None]
+        gates = [g for g in (latent_gate,) if g is not None]
         if gates and hasattr(proc, "row_editedness"):
             e = proc.row_editedness()
             w_full = weight.clone()
@@ -285,9 +280,6 @@ def main():
                              "own rows even when dest==source: the object cannot copy "
                              "itself in place and must re-form (move/re-pose) via the "
                              "cross-position identity bias. Use for action prompts.")
-    parser.add_argument("--preserve-release-source-ref", action="store_true",
-                        help="ablation: also unblock a preserve object's own-region gen→ref "
-                             "(risks reproducing the plain-Kontext 'prompt ignored' failure)")
     parser.add_argument("--identity-dynamic", action="store_true",
                         help="Stage 3a: gain-scale the identity bias per dest row by the "
                              "row's attention mass to the preserved object's text span "
@@ -305,15 +297,6 @@ def main():
                              "(the model's emergent gen->ref correspondence) instead of "
                              "a uniform region bias (which only transports the mean/low-"
                              "frequency appearance). 0 = uniform (old behavior).")
-    parser.add_argument("--semantic-gate", default=None,
-                        help="correspondence-gated semantic routing: attribute phrase "
-                             "(must appear in the prompt, e.g. 'yellow raincoat') whose "
-                             "text binding is gated per gen row by the semantics of its "
-                             "matched source part — rows matched to attribute-free parts "
-                             "(bare legs) stop hearing the phrase, so the prior cannot "
-                             "paint sleeves the source instance lacks. Needs --identity-topk.")
-    parser.add_argument("--semantic-kappa", type=float, default=4.0,
-                        help="suppression strength of the semantic gate")
     parser.add_argument("--identity-ot", action="store_true",
                         help="entropic optimal-transport identity delivery: Sinkhorn plan "
                              "between the object's gen rows and ref columns (row sums=1: "
@@ -331,24 +314,11 @@ def main():
                              "entropy, object mass, top-8 share) on identity layers and "
                              "print a summary — motivation measurement for the "
                              "correspondence-sharpening claim")
-    parser.add_argument("--identity-ramp", default=None,
-                        help="late-step identity ramp 'lo,hi,from,to' — multiply the "
-                             "identity transport by lo→hi over steps [from,to]. Early "
-                             "weak (pose forms from text, old pose not revived), late "
-                             "strong (pose locked, so strong ref transports fine detail "
-                             "from the REFERENCE without a prompt crutch). "
-                             "e.g. '1.0,3.0,6,24'")
     parser.add_argument("--target-dyn-bias", type=float, default=0.0,
                         help="dynamic positive text binding for replace targets: each "
                              "region row's own-target bias is gain-scaled by its "
                              "attention silhouette (object forms its own shape instead "
                              "of filling the mask)")
-    parser.add_argument("--dynamic-canvas", type=int, default=0,
-                        help="mask-shape independence: add a free ring this many tokens "
-                             "wide around the mask union (no suppression, no anchor) so "
-                             "objects can overflow the mask; each step, ring rows that "
-                             "no object claims (low attention editedness) are re-anchored "
-                             "to the source background. Implies --identity-dynamic.")
     parser.add_argument("--soft-background", type=float, default=0.0,
                         help="mask-FREE background preservation: replace RePaint latent "
                              "anchoring with an attention bias — every non-source-mask "
@@ -372,33 +342,12 @@ def main():
                              "computing the anchor, leaving a growth band around forming "
                              "objects (0 = sharp per-row anchor; objects stay "
                              "nucleus-sized)")
-    parser.add_argument("--extra-objects", default=None,
-                        help="semicolon-separated phrases (must appear in the prompt) for "
-                             "NEW objects with no source region (e.g. 'cat'). Each gets a "
-                             "dynamic text-binding spec over the full canvas so its rows "
-                             "count as edited (releasing the soft-background anchor and "
-                             "text suppression where it forms). Requires full canvas.")
-    parser.add_argument("--extra-prior", type=float, default=0.5,
-                        help="uniform init gain for --extra-objects (no position prior; "
-                             "high enough that the object can nucleate anywhere)")
-    parser.add_argument("--two-pass", action="store_true",
-                        help="pass 1: free layout discovery (no RePaint, full canvas, "
-                             "optionally with --soft-background); harvest per-row "
-                             "editedness; pass 2: rerun with RePaint anchoring only "
-                             "rows no object claimed. Pixel-exact background + "
-                             "model-chosen layout.")
-    parser.add_argument("--edit-threshold", type=float, default=0.3,
-                        help="two-pass: editedness above this marks a row as edited "
-                             "(left free in pass 2)")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--steps", type=int, default=28)
     parser.add_argument("--guidance-scale", type=float, default=3.5)
     parser.add_argument("--suppression-bias", type=float, default=-1e4,
                         help="negative attention bias for other objects' text tokens")
-    parser.add_argument("--target-bias", type=float, default=0.0,
-                        help="positive attention bias for own target text tokens "
-                             "(0 = only negative suppression, recommended for tight masks)")
     parser.add_argument("--suppress-own-source", action="store_true",
                         help="for replace regions, suppress the region's own source-word "
                              "tokens as well. Useful for instruction prompts that contain "
@@ -434,8 +383,8 @@ def main():
     parser.add_argument("--layer-ids", default=None,
                         help="comma-separated global layer indices (0..56) when --layers custom")
     args = parser.parse_args()
-    full_canvas = args.soft_background > 0 or args.two_pass
-    if args.dynamic_canvas > 0 or full_canvas:
+    full_canvas = args.soft_background > 0
+    if full_canvas:
         args.identity_dynamic = True  # editedness needs the harvest machinery
     if full_canvas and args.no_rtar:
         raise ValueError("--soft-background/--two-pass need the regional processor "
@@ -571,24 +520,6 @@ def main():
                 all_gen.append(g)
         print(f"  full canvas: all {N} tokens in gen union")
 
-    # Dynamic canvas ring: a free band around the union where objects may
-    # overflow the mask shape. No suppression, no static anchor; unclaimed
-    # ring rows are re-anchored per step by attention editedness (callback).
-    ring_tokens = []
-    if args.dynamic_canvas > 0 and not full_canvas:
-        from scipy.ndimage import distance_transform_edt
-        edit_grid = np.zeros((GRID, GRID), dtype=bool)
-        for g in seen:
-            edit_grid[g // GRID, g % GRID] = True
-        dist = distance_transform_edt(~edit_grid)
-        for r, c in zip(*np.nonzero((dist > 0) & (dist <= args.dynamic_canvas))):
-            g = int(r) * GRID + int(c)
-            seen[g] = None
-            all_gen.append(g)
-            ring_tokens.append(g)
-        print(f"  dynamic canvas ring: {len(ring_tokens)} tokens "
-              f"(width {args.dynamic_canvas})")
-
     n_gen = len(all_gen)
     bg_idx = [i for i in range(N) if i not in seen]
     print(f"  gen union: {n_gen}, background: {len(bg_idx)}")
@@ -628,11 +559,6 @@ def main():
             if targets[j] != "-":
                 for t in target_spans[targets[j]]:
                     text_bias[i, t] = args.suppression_bias
-        # (optional) positive bias for own target
-        if args.target_bias != 0 and own_target[own_src] != "-":
-            for t in target_spans[own_target[own_src]]:
-                text_bias[i, t] = args.target_bias
-
     # ── Identity-preserve bias (cross-region gen→ref appearance pathway) ──
     # For each preserve object obj with destination dest:
     #   * dest rows get +identity_bias toward obj's ref tokens
@@ -640,7 +566,6 @@ def main():
     #     obj's source-word text suppression, and any block on obj's ref
     #     columns (relevant when dest == obj, i.e. in-place preserve)
     row_of = {g: i for i, g in enumerate(all_gen)}
-    ring_rows = [row_of[g] for g in ring_tokens]
 
     def prior_gain(prior_tokens, lo=0.25):
         """Full-canvas init gain: 1.0 inside the object's mask prior, lo
@@ -681,13 +606,8 @@ def main():
                         g0 = prior_gain(prior)
                     dyn_setup.append((obj, list(range(n_gen)), obj_ref, obj_span, g0))
                 else:
-                    # the identity silhouette may extend into the canvas ring
-                    dyn_setup.append((obj, dest_rows + ring_rows, obj_ref,
+                    dyn_setup.append((obj, dest_rows, obj_ref,
                                       obj_span, None))
-            if args.preserve_release_source_ref:
-                for g in source_token_lists[obj]:
-                    i = row_of[g]
-                    ref_bias[i, obj_ref] = 0.0
         if identity_ref_bias is not None:
             print(f"  identity_ref_bias nonzeros: {(identity_ref_bias != 0).sum().item()}"
                   f"  (+{args.identity_bias}, steps [{args.identity_from_step},"
@@ -703,7 +623,7 @@ def main():
     # target span (object forms its own silhouette instead of filling the mask);
     # beta=0 still harvests, providing editedness for canvas re-anchoring.
     dyn_target_setup = []  # (obj, rows, target_span, init_gain)
-    if args.target_dyn_bias > 0 or args.dynamic_canvas > 0 or full_canvas:
+    if args.target_dyn_bias > 0 or full_canvas:
         for j, s in enumerate(sources):
             if modes[j] == "preserve" or targets[j] == "-":
                 continue
@@ -712,25 +632,11 @@ def main():
                 rows = list(range(n_gen))
                 g0 = prior_gain(source_token_lists[s])
             else:
-                region_rows = [i for i, g in enumerate(all_gen) if seen[g] == s]
-                rows = region_rows + ring_rows
+                rows = [i for i, g in enumerate(all_gen) if seen[g] == s]
                 g0 = None
             dyn_target_setup.append((s, rows, span, g0))
             print(f"  target (dynamic) '{s}'→'{targets[j]}': {len(rows)} rows, "
                   f"beta={args.target_dyn_bias}")
-
-    # New objects with no source region (e.g. a cat that appears): dynamic
-    # text-binding spec over the whole canvas, uniform prior — the object may
-    # nucleate anywhere; its rows then count as edited.
-    if args.extra_objects:
-        if not full_canvas:
-            raise ValueError("--extra-objects needs --soft-background or --two-pass")
-        for phrase in [p.strip() for p in args.extra_objects.split(";") if p.strip()]:
-            span = find_token_span(tokenizer, args.prompt, phrase, T_FULL)
-            dyn_target_setup.append(
-                (phrase, list(range(n_gen)), span, [args.extra_prior] * n_gen))
-            print(f"  extra object (dynamic) '{phrase}': full canvas, "
-                  f"beta={args.target_dyn_bias}, prior={args.extra_prior}")
 
     print(f"  text_bias nonzeros: {(text_bias != 0).sum().item()}")
     print(f"  ref_bias  nonzeros: {(ref_bias != 0).sum().item()}")
@@ -781,22 +687,10 @@ def main():
         if ot_cfg:
             print(f"  identity transport: entropic OT (tau={args.ot_tau}, "
                   f"lambda={args.ot_lambda}, iters={args.ot_iters})")
-        if args.semantic_gate:
-            gspan = find_token_span(tokenizer, args.prompt, args.semantic_gate, T_FULL)
-            proc.sem_gate = {"span": torch.tensor(gspan, dtype=torch.long),
-                             "kappa": args.semantic_kappa}
-            print(f"  semantic gate: '{args.semantic_gate}' tokens {gspan}, "
-                  f"kappa={args.semantic_kappa}")
         proc.capture_entropy = args.capture_entropy
         for obj, rows, span, g0 in dyn_target_setup:
             proc.add_dynamic(rows, span, span, args.target_dyn_bias,
                              in_ref=False, init_gain=g0, **dyn_kw)
-        if args.identity_ramp:
-            lo, hi, rf, rt = (float(x) for x in args.identity_ramp.split(","))
-            proc.id_ramp = True
-            proc.ramp_lo, proc.ramp_hi = lo, hi
-            proc.ramp_from, proc.ramp_to = int(rf), int(rt)
-            print(f"  identity ramp: x{lo}->{hi} over steps [{int(rf)},{int(rt)}]")
         if args.soft_background > 0:
             bg_rows = [i for i, g in enumerate(all_gen) if seen[g] is None]
             bg_toks = [all_gen[i] for i in bg_rows]
@@ -841,11 +735,6 @@ def main():
     print(f"  repaint weight: {n_full} anchored, {n_soft} feathered, "
           f"{N - n_full - n_soft} generative "
           f"(dilate={args.repaint_dilate}, spatial_feather={args.repaint_spatial_feather})")
-    ring = None
-    if ring_tokens:
-        ring = (torch.tensor(ring_tokens, dtype=torch.long),
-                torch.tensor(ring_rows, dtype=torch.long))
-
     # editedness-gated latent preservation of the true background (mask-free):
     # every non-source-mask token, anchored to source by (1-editedness)
     latent_gate = None
@@ -862,7 +751,7 @@ def main():
             proc, src_packed, weight,
             repaint_until_step=args.repaint_until_step,
             feather_ramp=args.repaint_feather,
-            ring=ring, latent_gate=latent_gate,
+            latent_gate=latent_gate,
         )
         print(f"  [{tag}] {args.steps} steps  gs={args.guidance_scale}  "
               f"seed={args.seed}  apply_until_step={args.apply_until_step}  "
@@ -878,28 +767,7 @@ def main():
             callback_on_step_end=callback,
         ).images[0]
 
-    if args.two_pass:
-        # Pass 1: free layout discovery — no latent anchor; the model decides
-        # where the edit lives. (Optionally soft-background keeps the rest
-        # approximately in place.)
-        pass1 = run_pass(torch.zeros(N), "pass 1: layout discovery")
-        pass1.save(output_path.with_name(output_path.stem + "_pass1.png"))
-        e = proc.row_editedness()
-        free = {all_gen[i] for i in range(n_gen) if float(e[i]) > args.edit_threshold}
-        n_disc = len(free)
-        for s in sources:  # source-object areas can never anchor to source
-            free.update(source_token_lists[s])
-        print(f"  [pass 2] edited rows discovered: {n_disc} "
-              f"(threshold {args.edit_threshold}); free zone incl. sources: {len(free)}")
-        w2 = build_repaint_weight(
-            sorted(free), N, GRID,
-            dilate=args.repaint_dilate,
-            spatial_feather=args.repaint_spatial_feather,
-        )
-        # keep the converged silhouette gains — pass 2 biases start localized
-        result = run_pass(w2, "pass 2: background lock")
-    else:
-        result = run_pass(repaint_w, "single pass")
+    result = run_pass(repaint_w, "single pass")
 
     result.save(output_path)
     print(f"[output] saved: {output_path}")
