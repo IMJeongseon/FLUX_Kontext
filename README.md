@@ -15,7 +15,7 @@ attention, with three roles:
 |---|---|---|
 | **Transport** | being edited (`e`↑) | boost each row's top-k emergent gen→ref matches (`+β·e`) — carries high-frequency instance detail to the object's **new** location |
 | **Preserve** | untouched (`e`↓) | latent pixel copy + prompt-deafening (`×(1−e)`) — background stays source-faithful |
-| **Vacate** (move mode) | object's source rows | block same-position copy → the object must re-form where the prompt says |
+| **Vacate** | object's source rows | block same-position copy → the object must re-form where the prompt says |
 
 Constants: FreeFlux content layers (13), `β=3.5`, `k=8`. Rough box masks
 suffice (soft prior only). Prompt rule: describe preserved attributes with
@@ -25,16 +25,18 @@ priors override the reference).
 ## Quickstart
 
 ```bash
-# move: keep THIS corgi's identity, let it jump (large motion)
-python lean.py --input data/sources/corgi_raincoat.png \
-    --mask data/masks/mask_corgi_rough.png --object corgi --mode move \
-    --identity 3.5 --topk 8 \
+# keep THIS corgi's identity, let it jump (large motion)
+python src/pipeline.py \
+    --input data/sources/corgi_raincoat.png \
+    --mask data/masks/mask_corgi_rough.png \
+    --object corgi \
     --prompt "The corgi wearing a yellow outfit with the number 5 is jumping high in the air to catch a red frisbee." \
     --output outputs/corgi_jump.png
 ```
 
-Modes: `replace` (object → target phrase) · `keep` (identity, in place) ·
-`move` (identity + prompt-driven motion).
+Defaults are the validated recipe (top-8 transport, β=3.5, vacate on,
+content layers). Ablation arms: `--no-vacate`, `--identity-topk 0` (uniform),
+`--identity-ot`, `--baseline` (plain Kontext).
 
 Requires: 2×24GB GPUs (`device_map=balanced`), diffusers ≥0.35,
 FLUX.1-Kontext-dev weights (HF gated).
@@ -42,9 +44,8 @@ FLUX.1-Kontext-dev weights (HF gated).
 ## Layout
 
 ```
-lean.py            # main entry point (3 modes, core knobs only)
-best_ver.py        # frozen best-recipe launcher
-src/               # core: pipeline + attention processor
+src/pipeline.py    # THE method (single entry point, validated defaults)
+src/regional_processor.py   # gated-bias attention processor
 eval/              # metrics (marker-survival, CLIP-direction motion) + manifests
 scripts/           # data generation utilities
 legacy/            # exploration-era scripts (kept for ablation reproduction)
