@@ -2,7 +2,7 @@
  {
   "name": "corgi/kontext",
   "source": "data/sources/corgi_raincoat.png",
-  "output": "outputs/rtar/corgi_jump_plain.png",
+  "output": "outputs/lean/corgi_jump_plain.png",
   "marker_box": [
    560,
    360,
