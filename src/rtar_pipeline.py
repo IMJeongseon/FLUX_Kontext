@@ -56,8 +56,8 @@ import os
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-MRAS_SRC = HERE.parent / "MRAS" / "src"
+HERE = Path(__file__).resolve().parent          # <repo>/src
+MRAS_SRC = HERE.parent.parent / "MRAS" / "src"  # sibling MRAS checkout
 sys.path.insert(0, str(MRAS_SRC))
 sys.path.insert(0, str(HERE))
 

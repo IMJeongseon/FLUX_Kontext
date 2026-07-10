@@ -58,6 +58,6 @@ DEFAULTS = [
     "--save-mask-figure",
 ]
 
-cmd = [sys.executable, str(HERE / "rtar_pipeline.py"), *DEFAULTS, *sys.argv[1:]]
+cmd = [sys.executable, str(HERE / "src" / "rtar_pipeline.py"), *DEFAULTS, *sys.argv[1:]]
 print("[best_ver]", " ".join(cmd[1:]))
 sys.exit(subprocess.run(cmd, cwd=HERE).returncode)

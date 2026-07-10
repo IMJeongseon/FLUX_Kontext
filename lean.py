@@ -106,7 +106,7 @@ def main():
                 "--identity-bias", str(args.identity),
                 "--identity-topk", str(args.topk)]
 
-    cmd = [sys.executable, str(HERE / "rtar_pipeline.py"), *common, *mode]
+    cmd = [sys.executable, str(HERE / "src" / "rtar_pipeline.py"), *common, *mode]
     print("[lean]", args.mode, "->", args.output)
     sys.exit(subprocess.run(cmd, cwd=HERE).returncode)
 
