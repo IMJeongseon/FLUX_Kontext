@@ -172,6 +172,14 @@ def main():
                     help="prompt-deafening strength for unclaimed rows")
     ap.add_argument("--identity-from-step", type=int, default=0)
     ap.add_argument("--identity-until-step", type=int, default=28)
+    ap.add_argument("--motion-boost", type=float, default=0.0,
+                    help="verb-token text boost on mask rows during early "
+                         "steps (motion prior amplification; 0=off)")
+    ap.add_argument("--motion-phrase", default=None,
+                    help="verb phrase in --prompt to boost (required if "
+                         "--motion-boost > 0)")
+    ap.add_argument("--motion-until-step", type=int, default=8,
+                    help="last step (inclusive) for the motion boost")
     ap.add_argument("--layers", default="content",
                     choices=["all", "position", "content", "not-content",
                              "not-position", "custom"])
@@ -268,9 +276,23 @@ def main():
         proc.set_soft_background(bg_rows, bg_rows, args.bg_anchor,
                                  text_suppress=args.bg_text_suppress,
                                  halo=args.bg_halo)
+        if args.motion_boost > 0:
+            phrase = args.motion_phrase
+            if not phrase:
+                raise SystemExit("--motion-boost requires --motion-phrase")
+            verb_span = find_token_span(tokenizer, args.prompt, phrase, T_FULL)
+            # boost on the editable (mask) rows only; confirmed background is
+            # already prompt-deafened by the soft-background suppression
+            proc.set_verb_boost(sorted(obj_set), verb_span, args.motion_boost,
+                                args.motion_until_step, T_full=T_FULL)
+            print(f"  motion boost: '{phrase}' span={verb_span} "
+                  f"beta={args.motion_boost} steps<=({args.motion_until_step})")
         proc.capture_entropy = args.capture_entropy
         lf = resolve_layers(args.layers, args.layer_ids)
-        install(pipe, proc, layer_filter=lf, identity_layer_filter=lf)
+        # verb boost targets the layout channel — FreeFlux position layers
+        vlf = FREEFLUX_POSITION if args.motion_boost > 0 else None
+        install(pipe, proc, layer_filter=lf, identity_layer_filter=lf,
+                verb_layer_filter=vlf)
         latent_gate = (torch.tensor(bg_rows, dtype=torch.long),
                        torch.tensor(bg_rows, dtype=torch.long))
         mode = "OT" if args.identity_ot else (

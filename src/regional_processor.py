@@ -57,6 +57,21 @@ class RegionalMRASProcessor:
         self.dyn_gamma = 1.0
         self.dyn_floor = 0.0
         self.capture_entropy = False  # record within-object attention stats
+        # Motion prior amplification: verb-token text boost on editable rows,
+        # active only during the layout-forming steps. The layout basin
+        # (displace vs copy-in-place) is decided early; a targeted verb boost
+        # tips it without the appearance cost of raising global guidance.
+        self.verb_bias: torch.Tensor | None = None  # [n_gen, T_full]
+        self.verb_until = -1
+
+    def set_verb_boost(self, rows: list[int], span: tuple[int, int],
+                       beta: float, until_step: int, T_full: int = 512) -> None:
+        vb = torch.zeros(len(self.gen_t), T_full, dtype=torch.float32)
+        vb[torch.tensor(rows, dtype=torch.long).unsqueeze(1),
+           torch.arange(span[0], span[1])] = beta
+        self.verb_bias = vb
+        self.verb_until = until_step
+        self._cache.clear()
 
     def _nongen_rows(self, T: int, N: int, device):
         """Joint-sequence rows NOT manually recomputed (text + non-gen image +
@@ -189,24 +204,32 @@ class RegionalMRASProcessor:
         if key not in self._cache:
             irb = (self.identity_ref_bias.to(device)
                    if self.identity_ref_bias is not None else None)
+            vb = (self.verb_bias.to(device)
+                  if self.verb_bias is not None else None)
             self._cache[key] = (
                 self.gen_t.to(device),
                 self.text_bias.to(device),
                 self.ref_bias.to(device),
                 irb,
+                vb,
             )
         return self._cache[key]
 
-    def _active(self, attn) -> tuple[bool, bool]:
-        do_s, do_i = self._roles.get(id(attn), (True, self.has_identity))
+    def _active(self, attn) -> tuple[bool, bool, bool]:
+        roles = self._roles.get(id(attn), (True, self.has_identity, False))
+        do_s, do_i, do_v = roles if len(roles) == 3 else (*roles, False)
         s_active = do_s and self.current_step <= self.apply_until
         i_active = (do_i and self.has_identity
                     and self.id_from <= self.current_step <= self.id_until)
-        return s_active, i_active
+        v_active = (do_v and self.verb_bias is not None
+                    and self.current_step <= self.verb_until)
+        return s_active, i_active, v_active
 
-    def _apply(self, scores, gs, rs, T, gen_t, tb, rb, irb,
-               s_active: bool, i_active: bool):
+    def _apply(self, scores, gs, rs, T, gen_t, tb, rb, irb, vb,
+               s_active: bool, i_active: bool, v_active: bool = False):
         # scores: [1, H, n_gen, total_len]
+        if v_active and vb is not None:
+            scores[:, :, :, :T] = scores[:, :, :, :T] + vb[None, None, :, :T]
         if s_active:
             scores[:, :, :, :T] = scores[:, :, :, :T] + tb[None, None, :, :T]
             scores[:, :, :, rs:rs + self._N] = scores[:, :, :, rs:rs + self._N] + rb[None, None, :, :]
@@ -416,9 +439,9 @@ class RegionalMRASProcessor:
             kp = key.permute(0, 2, 1, 3)
             vp = value.permute(0, 2, 1, 3)
 
-            s_active, i_active = self._active(attn)
+            s_active, i_active, v_active = self._active(attn)
             apply = (
-                (s_active or i_active)
+                (s_active or i_active or v_active)
                 and len(self.gen_t) > 0
                 and self._T_full is not None
             )
@@ -438,7 +461,7 @@ class RegionalMRASProcessor:
                 gs = T
                 rs = T + N
                 device = qp.device
-                gen_t, tb, rb, irb = self._get(device)
+                gen_t, tb, rb, irb, vb = self._get(device)
                 gen_rows = gs + gen_t
 
                 ci = B - 1
@@ -448,8 +471,8 @@ class RegionalMRASProcessor:
                 D_h = q_gm.shape[-1]
                 scale = D_h ** -0.5
                 scores = (q_gm.float() @ k_all.float().transpose(-2, -1)) * scale
-                scores = self._apply(scores, gs, rs, T, gen_t, tb, rb, irb,
-                                     s_active, i_active)
+                scores = self._apply(scores, gs, rs, T, gen_t, tb, rb, irb, vb,
+                                     s_active, i_active, v_active)
                 attn_w = torch.softmax(scores, dim=-1).to(qp.dtype)
                 self._harvest(attn_w, i_active)
                 out_gm = attn_w @ v_all
@@ -490,9 +513,9 @@ class RegionalMRASProcessor:
         jk_p = jk.permute(0, 2, 1, 3)
         jv_p = jv.permute(0, 2, 1, 3)
 
-        s_active, i_active = self._active(attn)
+        s_active, i_active, v_active = self._active(attn)
         apply = (
-            (s_active or i_active)
+            (s_active or i_active or v_active)
             and len(self.gen_t) > 0
         )
         T_full = encoder_hidden_states.shape[1]
@@ -510,7 +533,7 @@ class RegionalMRASProcessor:
             gs = T_full
             rs = T_full + N_img
             device = jq_p.device
-            gen_t, tb, rb, irb = self._get(device)
+            gen_t, tb, rb, irb, vb = self._get(device)
             gen_rows = gs + gen_t
 
             ci = B - 1
@@ -520,8 +543,8 @@ class RegionalMRASProcessor:
             D_h = q_gm.shape[-1]
             scale = D_h ** -0.5
             scores = (q_gm.float() @ k_all.float().transpose(-2, -1)) * scale
-            scores = self._apply(scores, gs, rs, T_full, gen_t, tb, rb, irb,
-                                 s_active, i_active)
+            scores = self._apply(scores, gs, rs, T_full, gen_t, tb, rb, irb, vb,
+                                 s_active, i_active, v_active)
             attn_w = torch.softmax(scores, dim=-1).to(jq_p.dtype)
             self._harvest(attn_w, i_active)
             out_gm = attn_w @ v_all
@@ -556,22 +579,27 @@ def _layer_global_index(name: str) -> int:
 
 
 def install(pipe, processor, layer_filter: list[int] | None = None,
-            identity_layer_filter: list[int] | None = None):
+            identity_layer_filter: list[int] | None = None,
+            verb_layer_filter: list[int] | None = None):
     """Install processor on all attention blocks, optionally filtered by
     global layer index (0..56).
 
     layer_filter          : layers where suppression biases apply (None = all).
     identity_layer_filter : layers where the identity boost applies (None = all);
                             only meaningful if processor.identity_ref_bias is set.
+    verb_layer_filter     : layers where the motion verb boost applies; only
+                            meaningful if processor.set_verb_boost() was called.
+                            Default None = boost nowhere (off).
 
-    A layer is installed if it belongs to either set; its per-mechanism role is
+    A layer is installed if it belongs to any set; its per-mechanism role is
     registered on the processor so a single shared instance can behave
-    differently per layer. Layers in NEITHER set keep their default processor.
+    differently per layer. Layers in NO set keep their default processor.
     """
     has_identity = getattr(processor, "has_identity", None) or (
         getattr(processor, "identity_ref_bias", None) is not None)
+    has_verb = getattr(processor, "verb_bias", None) is not None
     original = {}
-    installed_sup, installed_id = [], []
+    installed_sup, installed_id, installed_vb = [], [], []
     for name, module in pipe.transformer.named_modules():
         if not (name.endswith(".attn") and hasattr(module, "set_processor")):
             continue
@@ -583,16 +611,19 @@ def install(pipe, processor, layer_filter: list[int] | None = None,
         do_s = layer_filter is None or gidx in layer_filter
         do_i = has_identity and (identity_layer_filter is None
                                  or gidx in identity_layer_filter)
-        if not (do_s or do_i):
+        do_v = has_verb and verb_layer_filter is not None and gidx in verb_layer_filter
+        if not (do_s or do_i or do_v):
             continue
         original[name] = module.processor
         module.set_processor(processor)
         if hasattr(processor, "_roles"):
-            processor._roles[id(module)] = (do_s, do_i)
+            processor._roles[id(module)] = (do_s, do_i, do_v)
         if do_s:
             installed_sup.append(gidx)
         if do_i:
             installed_id.append(gidx)
+        if do_v:
+            installed_vb.append(gidx)
     n_d = sum(1 for n in original if "single_transformer_blocks" not in n)
     n_s = len(original) - n_d
     print(f"[Regional] {len(original)} layers installed (double={n_d}, single={n_s})")
