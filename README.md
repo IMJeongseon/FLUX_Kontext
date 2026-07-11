@@ -60,6 +60,44 @@ histogram of the best match), **motion** (CLIP direction: action prompt vs
 static counterpart), and CLIP-T. See `eval/pilot_manifest.json` for the
 case format.
 
+## Status — the open problem (2026-07-11)
+
+**Goal**: identity preserved under LARGE motion. Current standing on the
+10-case benchmark (`eval/bench_manifest.json`): motion+identity on **8/10**
+after seed/prompt-rule fixes; the residual problem is that **fine identity
+degrades exactly when motion succeeds** — e.g. the pug's letter "K":
+marker-DINO 0.80 when static, 0.59–0.64 mid-jump.
+
+Mathematical diagnosis (error decomposition of attention transport
+`o_i = Σ_j P_ij v_j` against the true correspondence π):
+
+| term | meaning | attack |
+|---|---|---|
+| E_mix | row entropy — convex mixing blurs high-freq | top-k (in), sharper β saturates |
+| E_assign | no column constraint — many-to-one collapse | `--identity-ot` (Sinkhorn), **experiment queued** |
+| E_arrange | matches ignore spatial coherence — detail scrambles | motion-model feedback (planned) |
+| E_quant | VAE 16×16px patch floor | irreducible, stated as limit |
+
+Bias-only methods (everything operating on attention scores) provably leave
+E > 0: softmax output stays inside the convex hull, and 44 uncontrolled
+layers keep injecting the category prior. Hence **solution A** (`a62cf92`):
+make the correspondence OBSERVED (DINO matching + locally-rigid fit around
+the marker, `src/observe_warp.py`) and enforce identity as a state-space
+**projection** (re-noised composite latent overwrites the trajectory,
+`src/twostage.py`) — the same mechanism class that already makes our
+background preservation exact. Verification run is queued (see HANDOFF.md).
+
+## TODO (priority order)
+
+1. **Stage-2 projection test** (pug s123): does the observed-warp anchor
+   restore the "K"? — commands + pass criteria in [HANDOFF.md](HANDOFF.md)
+2. **OT vs top-k** on motion-success cases → measures the E_assign share
+3. T2I prior-ceiling test for the 2 residual motion failures
+   (goat rearing / penguin belly-slide): our defect vs inherited ceiling
+4. Full 10 cases × 3 seeds success table; then baselines
+   (plain Kontext / KV-Edit / FlowEdit) on identical neutral prompts
+5. Metrics v3: 3×3 grid-cell color histogram (spatially aware — E_arrange)
+
 ## Notes
 
 - Full exploration history (including ablated mechanisms: uniform/OT
@@ -67,3 +105,7 @@ case format.
   see the `snapshot` commit.
 - Known limitation: garment *topology* is decided by the text prior; use
   neutral garment words (see prompt rule above).
+- Motion reliability: displacement is delegated to the text prior — verbs
+  whose layout the prior barely contains (body-axis rotation, biped pose for
+  a clothed quadruped) fail across seeds; `--motion-boost` amplifies an
+  existing layout basin but cannot create one (saturates by β=4).
